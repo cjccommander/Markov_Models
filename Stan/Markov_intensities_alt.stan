@@ -1,20 +1,20 @@
 //////////////////////////////////////////////////////////
-//
-// continuous-time Markov Transition Model estimator
+  //
+  // continuous-time Markov Transition Model estimator
 // authors: DK Okamoto, CJC Commander, T Tinker
 // last update: 21 May, 2021
 // 
-//////////////////////////////////////////////////////////
-
-functions{
-  // dirichlet multinomial 
-  real dirichlet_multinomial_lpmf(int[] y, vector alpha) {
-    real alpha_plus = sum(alpha);
+  //////////////////////////////////////////////////////////
   
-    return lgamma(alpha_plus) + sum(lgamma(alpha + to_vector(y))) 
+  functions{
+    // dirichlet multinomial 
+    real dirichlet_multinomial_lpmf(int[] y, vector alpha) {
+      real alpha_plus = sum(alpha);
+      
+      return lgamma(alpha_plus) + sum(lgamma(alpha + to_vector(y))) 
       - lgamma(alpha_plus + sum(y)) - sum(lgamma(alpha));
+    }
   }
-}
 
 data{
   int<lower=1> n_obs;
@@ -36,7 +36,7 @@ parameters{
 transformed parameters{
   vector[n_states] y_probs[n_obs];
   
-  profile("trans pars"){
+  //profile("trans pars"){
     for (t in 1 : n_obs){
       if (time_diff[t] > 0){
         
@@ -62,24 +62,24 @@ transformed parameters{
         y_probs[t] = (to_row_vector(y_obs[t - 1]) * matrix_exp(time_diff[t] * q_mat))';
       }
     }
-  }
+  //}
 }
 
 model{
-  profile("prior"){
-    // folded unit norma, prior for intensities
+  //profile("prior"){
+    // folded unit normal, prior for intensities
     for(i in 1 : n_states){
-      for(j in 1 : n_states - 1){
+      for(j in 1 : (n_states - 1)){
         target += std_normal_lpdf(beta[i, j]);
       }
     }
-  }
+  //}
   
-  // folded unit nromal prior for dirichlet-scale
+  // folded unit normal prior for dirichlet-scale
   target += student_t_lpdf(alpha| 3, 0, 2.5);
   
   // likelihood
-  profile("likelihood"){
+  //profile("likelihood"){
     for (t in 1 : n_obs){
       if (time_diff[t] > 0){
         // apply dirichlet multinomial if overdispersed
@@ -90,5 +90,5 @@ model{
         }
       } 
     }
-  }
+  //}
 }
