@@ -4,7 +4,6 @@
 # Model 2: Region Model
 # Model 3: Otter Occupation Time (Categories) Model
 # Model 4: Region + OOT_Cat
-
 # Model 5: Region + OOT + Region:OOT_Cat # run this and compare (Bayes Factor)
 
 # Model 1: null model

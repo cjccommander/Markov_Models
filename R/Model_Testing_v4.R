@@ -1,5 +1,8 @@
 #### Bayesian Markov Model v4 ####
 
+# *** Future Work: Develop R function to project comm. state changes under different scenarios 
+# (e.g., varying otter occupation time and varying otter density [need Tim for this])
+
 ## Have a plot of just self-transitions (4 panel plot (OOTCat))
 ## Maybe make plot with inverse of from this state/to this state (To this state as panel, from this state as x axis)
 
@@ -19,14 +22,6 @@
 # The convergence time (length of the transient period) can be approximated 
 # using the half-life to equilibrium: t_0.5 = log(2)/log(rho)
 # (3) Entropy: use Brice et al. 2020 formula
-
-### NOTES ###
-
-# "estimated baseline hazards (i.e., instantaneous
-# risk of moving from one state to another when all covariates are set to 0 
-# (i.e., the means of standardized covariates)" - From Brice et al. 2020
-# These show the background rate of community changes for the study area 
-# (i.e., the greatest transition intensities are the dominant state transitions)
 
 # Maybe one more model?
 # Region + OOT_Cat + Physical Variable(s) (e.g., exposure) ???
@@ -171,17 +166,16 @@ betas <- rstan::extract(stanfit)$beta
 
 ## Model Outputs ##
 
-## Qmats [*** loop over Qmats, get mean and CI for each Qmat, then take average (same procedure as steady state)]
-# Extract Qmats (# estimated transition intensities/hazards)
+# Extract Qmats (# estimated transition intensities)
 qmats <- rstan::extract(stanfit)$q_mat_gen
 #saveRDS(qmats, "Qmats_RegionOOT.rds")
-# load Qmats
+
+# Load estimated Qmats
 Qmats_RegionOOT = readRDS("~/Markov/Qmats_RegionOOT.rds")
 qmats = Qmats_RegionOOT
-dim(qmats) # 2500 iterations for each region--OOT contrast (9) and each state transition (6 x 6)
-qmat_df <- melt(qmats)
+dim(qmats) # 2500 iterations of intensities/q's for each region--OOT contrast (9) and each state transition (6 x 6)
+qmat_df <- melt(qmats) # make into df
 names(qmat_df) <- c("iter","contrast","from","to","Qval")
-# Create estimated transition intensity/hazard matrices for each contrast
 # First, get mean, median, and upper & lower 90% and 95% intervals
 Qmat = qmat_df %>%
   group_by(from, to, contrast) %>%
@@ -204,6 +198,18 @@ Qmat_WCVI_Low = Qmat %>% filter(contrast == "7")
 Qmat_WCVI_Med = Qmat %>% filter(contrast == "8")
 Qmat_WCVI_High = Qmat %>% filter(contrast == "9")
 
+# Save Qmats for each contrast
+#saveRDS(Qmat_CCBC_None, "Qmat_CCBC_None.rds")
+#saveRDS(Qmat_CCBC_Low, "Qmat_CCBC_Low.rds")
+#saveRDS(Qmat_CCBC_Med, "Qmat_CCBC_Med.rds")
+#saveRDS(Qmat_CCBC_High, "Qmat_CCBC_High.rds")
+#saveRDS(Qmat_HG_None, "Qmat_HG_None.rds")
+#saveRDS(Qmat_WCVI_None, "Qmat_WCVI_None.rds")
+#saveRDS(Qmat_WCVI_Low, "Qmat_WCVI_Low.rds")
+#saveRDS(Qmat_WCVI_Med, "Qmat_WCVI_Med.rds")
+#saveRDS(Qmat_WCVI_High, "Qmat_WCVI_High.rds")
+
+# Create mean Q matrices for each contrast
 # use pivot_wider() to transform df to matrix
 # CCBC None
 Qmat_CCBC_None = Qmat_CCBC_None %>% 
@@ -244,85 +250,84 @@ Qmat_WCVI_High = Qmat_WCVI_High %>%
   select(from, to, mean) %>% 
   pivot_wider(names_from = to, values_from = mean)
 
-# Save Qmats for each contrast
-#saveRDS(Qmat_CCBC_None, "Qmat_CCBC_None.rds")
-#saveRDS(Qmat_CCBC_Low, "Qmat_CCBC_Low.rds")
-#saveRDS(Qmat_CCBC_Med, "Qmat_CCBC_Med.rds")
-#saveRDS(Qmat_CCBC_High, "Qmat_CCBC_High.rds")
-#saveRDS(Qmat_HG_None, "Qmat_HG_None.rds")
-#saveRDS(Qmat_WCVI_None, "Qmat_WCVI_None.rds")
-#saveRDS(Qmat_WCVI_Low, "Qmat_WCVI_Low.rds")
-#saveRDS(Qmat_WCVI_Med, "Qmat_WCVI_Med.rds")
-#saveRDS(Qmat_WCVI_High, "Qmat_WCVI_High.rds")
+## Turnover (sojourn) time: time spent in one state before transitioning to a different state
+# Turnover_r = -1 / q_rr where q_rr is the rth entry on the diagonal of the estimated Q matrix
+# (i.e., -1 divided by each self transition (diagonal entries))
+# Since we have 2500 iterations of q estimates, we need to calculate turnover time 
+# for each iteration of self-transitions (q_rr), then average
+# Use original qmat_df (all iterations), add turnover time column (-1/Qval)
+# summarise, create "turnover time matrices", extract the diagonals (self-transitions)
+qmat_df$turnover = -1/qmat_df$Qval
 
+# Get turnover mean, median, and upper & lower 90% and 95% intervals
+Q_turnover = qmat_df %>%
+  group_by(from, to, contrast) %>%
+  summarise(mean = mean(turnover),
+            median = median(turnover),
+            pct90_lower = quantile(turnover, probs = 0.05),
+            pct90_upper = quantile(turnover, probs = 0.95),
+            pct95_lower = quantile(turnover, probs = 0.025), # maybe show 2 error bars: 90% and 95%
+            pct95_upper = quantile(turnover, probs = 0.975))
 
-## Turnover/sojourn time:
-# Turnover_r = -1 / Qrr where qrr is the rth entry on the diagonal of the estimated Q matrix
-# -1 divided by each self transition (diagonal entries)
-Sojourn_CCBC_None = -1/Qmat_CCBC_None
-Sojourn_CCBC_Low = -1/Qmat_CCBC_Low
-Sojourn_CCBC_Med = -1/Qmat_CCBC_Med
-Sojourn_CCBC_High = -1/Qmat_CCBC_High
-Sojourn_HG_None = -1/Qmat_HG_None
-Sojourn_WCVI_None = -1/Qmat_WCVI_None
-Sojourn_WCVI_Low = -1/Qmat_WCVI_Low
-Sojourn_WCVI_Med = -1/Qmat_WCVI_Med
-Sojourn_WCVI_High = -1/Qmat_WCVI_High # did WCVI Med and WCVI High get switched? Plot results and look. 
-# WCVI Med results look like what you'd expect from WCVI High, and vice versa.
+# filter data and create df's for each contrast
+Turnover_CCBC_None = Q_turnover %>% filter(contrast == "1") 
+Turnover_CCBC_Low = Q_turnover %>% filter(contrast == "2")
+Turnover_CCBC_Med = Q_turnover %>% filter(contrast == "3")
+Turnover_CCBC_High = Q_turnover %>% filter(contrast == "4")
+Turnover_HG_None = Q_turnover %>% filter(contrast == "5")
+Turnover_WCVI_None = Q_turnover %>% filter(contrast == "6") 
+Turnover_WCVI_Low = Q_turnover %>% filter(contrast == "7")
+Turnover_WCVI_Med = Q_turnover %>% filter(contrast == "8")
+Turnover_WCVI_High = Q_turnover %>% filter(contrast == "9")
 
-# extract diagonal (turnover time) from each matrix and create df
-Sojourn_CCBC_None = as.data.frame(diag(as.matrix(Sojourn_CCBC_None[, -1])))
-Sojourn_CCBC_None$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
-Sojourn_CCBC_None$region_OOT = "CCBC_None"
-names(Sojourn_CCBC_None)[1] = "turnover_time"
+# select just self-transitions --> rows = c(1,8,15,22,29,36)
+# add region_OOT and comm_state
+Turnover_CCBC_None = Turnover_CCBC_None[c(1,8,15,22,29,36), 4:9]
+Turnover_CCBC_None$region_OOT = "CCBC_None"
+Turnover_CCBC_None$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
 
-Sojourn_CCBC_Low = as.data.frame(diag(as.matrix(Sojourn_CCBC_Low[, -1])))
-Sojourn_CCBC_Low$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
-Sojourn_CCBC_Low$region_OOT = "CCBC_Low"
-names(Sojourn_CCBC_Low)[1] = "turnover_time"
+Turnover_CCBC_Low = Turnover_CCBC_Low[c(1,8,15,22,29,36), 4:9]
+Turnover_CCBC_Low$region_OOT = "CCBC_Low"
+Turnover_CCBC_Low$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
 
-Sojourn_CCBC_Med = as.data.frame(diag(as.matrix(Sojourn_CCBC_Med[, -1])))
-Sojourn_CCBC_Med$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
-Sojourn_CCBC_Med$region_OOT = "CCBC_Med"
-names(Sojourn_CCBC_Med)[1] = "turnover_time"
+Turnover_CCBC_Med = Turnover_CCBC_Med[c(1,8,15,22,29,36), 4:9]
+Turnover_CCBC_Med$region_OOT = "CCBC_Med"
+Turnover_CCBC_Med$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
 
-Sojourn_CCBC_High = as.data.frame(diag(as.matrix(Sojourn_CCBC_High[, -1])))
-Sojourn_CCBC_High$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
-Sojourn_CCBC_High$region_OOT = "CCBC_High"
-names(Sojourn_CCBC_High)[1] = "turnover_time"
+Turnover_CCBC_High = Turnover_CCBC_High[c(1,8,15,22,29,36), 4:9]
+Turnover_CCBC_High$region_OOT = "CCBC_High"
+Turnover_CCBC_High$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
 
-Sojourn_HG_None = as.data.frame(diag(as.matrix(Sojourn_HG_None[, -1])))
-Sojourn_HG_None$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
-Sojourn_HG_None$region_OOT = "HG_None"
-names(Sojourn_HG_None)[1] = "turnover_time"
+Turnover_HG_None = Turnover_HG_None[c(1,8,15,22,29,36), 4:9]
+Turnover_HG_None$region_OOT = "HG_None"
+Turnover_HG_None$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
 
-Sojourn_WCVI_None = as.data.frame(diag(as.matrix(Sojourn_WCVI_None[, -1])))
-Sojourn_WCVI_None$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
-Sojourn_WCVI_None$region_OOT = "WCVI_None"
-names(Sojourn_WCVI_None)[1] = "turnover_time"
+Turnover_WCVI_None = Turnover_WCVI_None[c(1,8,15,22,29,36), 4:9]
+Turnover_WCVI_None$region_OOT = "WCVI_None"
+Turnover_WCVI_None$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
 
-Sojourn_WCVI_Low = as.data.frame(diag(as.matrix(Sojourn_WCVI_Low[, -1])))
-Sojourn_WCVI_Low$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
-Sojourn_WCVI_Low$region_OOT = "WCVI_Low"
-names(Sojourn_WCVI_Low)[1] = "turnover_time"
+Turnover_WCVI_Low = Turnover_WCVI_Low[c(1,8,15,22,29,36), 4:9]
+Turnover_WCVI_Low$region_OOT = "WCVI_Low"
+Turnover_WCVI_Low$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
 
-Sojourn_WCVI_Med = as.data.frame(diag(as.matrix(Sojourn_WCVI_Med[, -1])))
-Sojourn_WCVI_Med$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
-Sojourn_WCVI_Med$region_OOT = "WCVI_Med"
-names(Sojourn_WCVI_Med)[1] = "turnover_time"
+Turnover_WCVI_Med = Turnover_WCVI_Med[c(1,8,15,22,29,36), 4:9]
+Turnover_WCVI_Med$region_OOT = "WCVI_Med"
+Turnover_WCVI_Med$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
 
-Sojourn_WCVI_High = as.data.frame(diag(as.matrix(Sojourn_WCVI_High[, -1])))
-Sojourn_WCVI_High$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
-Sojourn_WCVI_High$region_OOT = "WCVI_High"
-names(Sojourn_WCVI_High)[1] = "turnover_time"
+Turnover_WCVI_High = Turnover_WCVI_High[c(1,8,15,22,29,36), 4:9]
+Turnover_WCVI_High$region_OOT = "WCVI_High"
+Turnover_WCVI_High$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
 
 # combine dfs
-Sojourn_all = rbind(Sojourn_CCBC_None, Sojourn_CCBC_Low, Sojourn_CCBC_Med, Sojourn_CCBC_High, 
-                    Sojourn_HG_None, 
-                    Sojourn_WCVI_None, Sojourn_WCVI_Low, Sojourn_WCVI_Med, Sojourn_WCVI_High)
+Turnover_all = rbind(Turnover_CCBC_None, Turnover_CCBC_Low, Turnover_CCBC_Med, Turnover_CCBC_High, 
+                     Turnover_HG_None, 
+                     Turnover_WCVI_None, Turnover_WCVI_Low, Turnover_WCVI_Med, Turnover_WCVI_High)
 
-# Plot turnover time by contrast (x = comm. state, y = turnover time, color = region_OOT)
-# need 3 columns: contrast, comm. state, turnover time
+Turnover_all = Turnover_all %>% relocate(region_OOT, .before = mean) %>% 
+  relocate(comm_state, .after = region_OOT) %>% rename(mean_turnover = mean) %>% 
+  rename(median_turnover = median)
+
+# Plot mean turnover time by contrast (x = comm. state, y = mean turnover time, color = region_OOT)
 # ggplot options for visual appeal:
 gg_options <- function() theme_bw()+theme(
   panel.grid=element_blank(), # removes ugly grid lines
@@ -335,27 +340,165 @@ gg_options <- function() theme_bw()+theme(
   legend.key= element_blank()) #
 # Plot
 # re-order comm_state for x-axis and region_OOT for legend
-Sojourn_all$comm_state = factor(Sojourn_all$comm_state, levels = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence"))
-Sojourn_all$region_OOT = factor(Sojourn_all$region_OOT, levels = c("CCBC_None", "CCBC_Low", "CCBC_Med", 
+Turnover_all$comm_state = factor(Turnover_all$comm_state, levels = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence"))
+Turnover_all$region_OOT = factor(Turnover_all$region_OOT, levels = c("CCBC_None", "CCBC_Low", "CCBC_Med", 
                                                                    "CCBC_High", "HG_None", "WCVI_None", 
                                                                    "WCVI_Low", "WCVI_Med", "WCVI_High"))
-ggplot(Sojourn_all, aes(comm_state, turnover_time, fill = region_OOT)) + 
+ggplot(Turnover_all, aes(comm_state, mean_turnover, fill = region_OOT)) + 
   geom_col(position = "dodge") + 
+  #geom_errorbar(aes(ymin = pct95_lower, ymax = pct95_upper), width = 0.2, position = position_dodge(0.9)) + 
   xlab("Community State")+ 
   ylab("Turnover Time") + 
   gg_options()
 
 
 ## Pmats
-# Extract Pmats
+# Extract Pmats (# estimated transition probabilities)
 pmats <- rstan::extract(stanfit)$p_mat_gen
 #saveRDS(pmats, "Pmats_RegionOOT.rds")
-# load Pmats
+
+# Load Pmats
 Pmats_RegionOOT = readRDS("~/Markov/Pmats_RegionOOT.rds")
 pmats = Pmats_RegionOOT
 dim(pmats)
 pmat_df <- melt(pmats)
 names(pmat_df) <- c("iter","contrast","from","to","Prob")
+
+# First, get mean, median, and upper & lower 90% and 95% intervals
+Pmat = pmat_df %>%
+  group_by(from, to, contrast) %>%
+  summarise(mean = mean(Prob),
+            median = median(Prob),
+            pct90_lower = quantile(Prob, probs = 0.05),
+            pct90_upper = quantile(Prob, probs = 0.95),
+            pct95_lower = quantile(Prob, probs = 0.025), # maybe show 2 error bars: 90% and 95%
+            pct95_upper = quantile(Prob, probs = 0.975))
+
+# filter data and create df's for each contrast
+# * Note: Contrasts are ordered per the design matrix above
+Pmat_CCBC_None = Pmat %>% filter(contrast == "1") 
+Pmat_CCBC_Low = Pmat %>% filter(contrast == "2")
+Pmat_CCBC_Med = Pmat %>% filter(contrast == "3")
+Pmat_CCBC_High = Pmat %>% filter(contrast == "4")
+Pmat_HG_None = Pmat %>% filter(contrast == "5")
+Pmat_WCVI_None = Pmat %>% filter(contrast == "6") 
+Pmat_WCVI_Low = Pmat %>% filter(contrast == "7")
+Pmat_WCVI_Med = Pmat %>% filter(contrast == "8")
+Pmat_WCVI_High = Pmat %>% filter(contrast == "9")
+
+# Save Pmats for each contrast
+#saveRDS(Pmat_CCBC_None, "Pmat_CCBC_None.rds")
+#saveRDS(Pmat_CCBC_Low, "Pmat_CCBC_Low.rds")
+#saveRDS(Pmat_CCBC_Med, "Pmat_CCBC_Med.rds")
+#saveRDS(Pmat_CCBC_High, "Pmat_CCBC_High.rds")
+#saveRDS(Pmat_HG_None, "Pmat_HG_None.rds")
+#saveRDS(Pmat_WCVI_None, "Pmat_WCVI_None.rds")
+#saveRDS(Pmat_WCVI_Low, "Pmat_WCVI_Low.rds")
+#saveRDS(Pmat_WCVI_Med, "Pmat_WCVI_Med.rds")
+#saveRDS(Pmat_WCVI_High, "Pmat_WCVI_High.rds")
+
+# Create mean P matrices for each contrast
+# use pivot_wider() to transform df to matrix
+# CCBC None
+Pmat_CCBC_None = Pmat_CCBC_None %>% 
+  select(from, to, mean) %>% 
+  pivot_wider(names_from = to, values_from = mean)
+# CCBC Low
+Pmat_CCBC_Low = Pmat_CCBC_Low %>% 
+  select(from, to, mean) %>% 
+  pivot_wider(names_from = to, values_from = mean)
+# CCBC Med
+Pmat_CCBC_Med = Pmat_CCBC_Med %>% 
+  select(from, to, mean) %>% 
+  pivot_wider(names_from = to, values_from = mean)
+# CCBC High
+Pmat_CCBC_High = Pmat_CCBC_High %>% 
+  select(from, to, mean) %>% 
+  pivot_wider(names_from = to, values_from = mean)
+
+# HG None
+Pmat_HG_None = Pmat_HG_None %>% 
+  select(from, to, mean) %>% 
+  pivot_wider(names_from = to, values_from = mean)
+
+# WCVI None
+Pmat_WCVI_None = Pmat_WCVI_None %>% 
+  select(from, to, mean) %>% 
+  pivot_wider(names_from = to, values_from = mean)
+# WCVI Low
+Pmat_WCVI_Low = Pmat_WCVI_Low %>% 
+  select(from, to, mean) %>% 
+  pivot_wider(names_from = to, values_from = mean)
+# WCVI Med
+Pmat_WCVI_Med = Pmat_WCVI_Med %>% 
+  select(from, to, mean) %>% 
+  pivot_wider(names_from = to, values_from = mean)
+# WCVI High
+Pmat_WCVI_High = Pmat_WCVI_High %>% 
+  select(from, to, mean) %>% 
+  pivot_wider(names_from = to, values_from = mean)
+
+
+# Steady-State Distribution
+# Take the left eigenvector of the transition probability matrix, 
+# re-scale so the elements sum to 1 (Norris, 1997). Left eigenvectors = right eigenvectors 
+# of the transposed matrix. Use eigen() with transposed matrix (i.e., Pmat dataframe); 
+# left eigenvector is the 1st column.
+
+# For each contrast and each iteration, create a P matrix, calculate left eigenvector, store
+eigen_array = array(0, dim = c(2500, 9, 6))
+mat = matrix(data = 0.0, nrow = 6, ncol = 6)
+for(i in 1:2500){
+  for(j in 1:9) {
+    mat = subset(pmat_df, iter == i & contrast == j)
+    mat = t(matrix(mat$Prob, ncol = 6, nrow = 6)) # Left eigenvectors = right eigenvectors 
+    # of the transposed matrix. Use eigen() with transposed matrix; 
+    # left eigenvector is the 1st column.
+    eigen_array[i,j,] = eigen(mat)$vectors[,1]
+  }
+}
+
+# Average eigenvectors across iterations and by contrasts
+eigen_means = as.data.frame(apply(eigen_array, c(2,3), mean)) # ***There should be 9 eigenvectors
+eigen_means = eigen_means %>%
+  rename(Urchins = V1,
+         Understory = V2,
+         Epibenthic = V3,
+         Macro = V4,
+         Mixed = V5,
+         Coexistence = V6)
+# check to see if apply() is working the way we want
+#contrast1 = as.data.frame(eigen_array[,1,])
+#colMeans(contrast1) # compare to eigen_means
+# Now re-scale each eigenvector so they sum to 1 [use absolute values to change negative signs]
+eigen_means = as.data.frame(t(apply(eigen_means[1:6], 1, function(x) abs(x)/sum(abs(x)))))
+eigen_means$Region_OOT = c("CCBC_None", "CCBC_Low", "CCBC_Med", "CCBC_High", 
+                           "HG_None", 
+                           "WCVI_None", "WCVI_Low", "WCVI_Med", "WCVI_High")
+eigen_means = eigen_means %>% relocate(Region_OOT, .before = Urchins)
+
+# Save
+#write.csv(eigen_means, "SteadyStateDistribution.csv")
+
+# use pivot to get df in order for plotting
+eigen_means = eigen_means %>% pivot_longer(names_to = "State", values_to = "Steady", Urchins:Coexistence)
+eigen_means
+# Modify Region_OOTCat factor levels to get the order we want (not alphabetical order)
+eigen_means$Region_OOT = factor(eigen_means$Region_OOT, 
+                          levels = c("CCBC_None", "CCBC_Low", "CCBC_Med", "CCBC_High", 
+                                     "HG_None", 
+                                     "WCVI_None", "WCVI_Low", "WCVI_Med", "WCVI_High"))
+# Modify community state factor levels to get the order we want (not alphabetical order)
+eigen_means$State = factor(eigen_means$State, 
+                         levels = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence"))
+
+ggplot(eigen_means, aes(State, Steady, fill = Region_OOT)) + 
+  geom_col(position = "dodge") + 
+  xlab("Community State")+ 
+  ylab("Steady-State Distribution (%)") + 
+  gg_options()
+
+### Pmat Plotting ###
 
 ## Plot Pmat by OOT_Cat (HG_None, WCVI_None, CCBC_None)
 # filter Pmat df for OOT_Cat contrasts: OOTCat = "None"
@@ -549,16 +692,3 @@ ggplot(aes(y = Prob, x = factor(to), color = factor(contrast)), data = Pmat_HG)+
   ylab("Predicted Transition Probability")+
   scale_colour_discrete(name = "Region_OOT", labels = c("HG_None")) +
   gg_options()
-
-
-## # Steady-state distribution:
-# Take the left eigenvector of the transition probability matrix, 
-# re-scale so the elements sum to 1 (Norris, 1997). Left eigenvectors = right eigenvectors 
-# of the transposed matrix. Use eigen() with transposed matrix (i.e., Pmat dataframe); 
-# left eigenvector is the 1st column.
-
-# [*** We'll need to use the raw Pmat file for generating left eigenvectors for each iteration (filtered by category).
-# Then average those vectors (within each category) to get the steady-state distribution]
-# For each OOTCat, loop over each of the 250 iterations of Pmat, 
-# create a matrix, calculate left eigenvector, store, average
-
