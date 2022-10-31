@@ -37,25 +37,31 @@ library(Matrix)
 rstan::rstan_options(javascript=FALSE)
 
 # Empirical Data
-community_data = read.csv("~/Markov/CommunityStates_WCVIx2_CCBC_HG_combined.csv") %>% 
+community_data = read.csv("~/Markov/Markov_Models/R/CommunityStates_WCVIx2_CCBC_HG_combined_REVISED.csv") %>% 
   arrange(site, year)
-# select desired columns
+# select desired columns, including community state columns
+# * Select comm. state columns depending on density threshold:
+# "comm_state" and "state" = Threshold 1: 2 urchins, 0.5 algae
+# "comm_state_Threshold2" and "state_Threshold2" = 2.5 urchins, 1 algae
+# "comm_state_Threshold3" and "state_Threshold3" = 1 urchin, 1 algae
 community_data = community_data %>% 
   select(region, location, site, month, year, year.of.otter.occupancy,
          otter.occupation.time, state, comm_state)
+
 # We need to create a column of time differentials (time passed from the prior
-# time point, i.e. previous survey year)
+# time point, i.e., previous survey year)
 community_data = community_data %>% 
   group_by(site) %>% 
   mutate(time_diff = year - lag(year))
 # in time differential column, replace NA's with 0
 community_data[, 10][is.na(community_data[, 10])] = 0
 
-# remove the 3 obs. with the "empty" state category
+# remove the obs. with the "empty" state category
 community_data = community_data %>% filter(comm_state != "empty")
+# * replace "comm_state" with alternative (e.g., "comm_state_Threshold2") as needed
 
 # number of observations to simulate
-n_obs = 581
+n_obs = nrow(community_data)
 # number of states to simulate
 n_states = 6
 # time difference among observations (the initial is zero)
@@ -70,6 +76,7 @@ n_iter = 250
 # observation (i.e., site-year) with a 1 or 0 for each state column.
 # In the community_data df, create a column for each community state and 
 # assign a 0 or 1 for each row's observed state:
+# * replace "state" with alternative (e.g., "state_Threshold2") as needed
 community_data = community_data  %>% 
   mutate(state_1 = ifelse(state == 1, 1, 0)) %>% # urchins
   mutate(state_2 = ifelse(state == 2, 1, 0)) %>% # understory
@@ -104,11 +111,13 @@ community_data = community_data %>%
 # Design matrix
 X = model.matrix(~ region + OOT_Cat - 1, data = community_data)
 
-# Which contrasts I'm interested in:
-# [rows in design matrix X that correspond to region and OOTCat]
-contrast_rows = c(207, 1, 4, 20, 18, 5, 31, 8, 9) # 207 = CCBC, none; 1 = CCBC, low; etc.
-# 18 = HG, none (no otters)
-# 5 = WCVI, none; 31 = WCVI, low; etc.
+# Contrasts we're interested in:
+# (i.e., rows in the design matrix (X) that correspond to the region and otter occupation time category)
+contrast_rows = c(207, 1, 4, 20, 18, 5, 31, 8, 9)
+# 9 contrasts:
+# 207 = CCBC_None; 1 = CCBC_Low; 4 = CCBC_Med; 20 = CCBC_High
+# 18 = HG_None
+# 5 = WCVI_None; 31 = WCVI_Low; 8 = WCVI_Med; 9 = WCVI_High
 
 # create Stan data
 stan_data <- list(
@@ -176,14 +185,14 @@ qmats = Qmats_RegionOOT
 dim(qmats) # 2500 iterations of intensities/q's for each region--OOT contrast (9) and each state transition (6 x 6)
 qmat_df <- melt(qmats) # make into df
 names(qmat_df) <- c("iter","contrast","from","to","Qval")
-# First, get mean, median, and upper & lower 90% and 95% intervals
+# First, get mean, median, and upper & lower 90% and 95% quantiles
 Qmat = qmat_df %>%
   group_by(from, to, contrast) %>%
   summarise(mean = mean(Qval),
             median = median(Qval),
             pct90_lower = quantile(Qval, probs = 0.05),
             pct90_upper = quantile(Qval, probs = 0.95),
-            pct95_lower = quantile(Qval, probs = 0.025), # maybe show 2 error bars: 90% and 95%
+            pct95_lower = quantile(Qval, probs = 0.025),
             pct95_upper = quantile(Qval, probs = 0.975))
 
 # filter data and create df's for each contrast
@@ -259,14 +268,17 @@ Qmat_WCVI_High = Qmat_WCVI_High %>%
 # summarise, create "turnover time matrices", extract the diagonals (self-transitions)
 qmat_df$turnover = -1/qmat_df$Qval
 
-# Get turnover mean, median, and upper & lower 90% and 95% intervals
+# Get turnover mean, median, and upper & lower 90% and 95% quantiles
+stderror = function(x) sd(x)/sqrt(length(x)) # std. error function
 Q_turnover = qmat_df %>%
   group_by(from, to, contrast) %>%
   summarise(mean = mean(turnover),
             median = median(turnover),
+            sd = sd(turnover),
+            stderror = stderror(turnover),
             pct90_lower = quantile(turnover, probs = 0.05),
             pct90_upper = quantile(turnover, probs = 0.95),
-            pct95_lower = quantile(turnover, probs = 0.025), # maybe show 2 error bars: 90% and 95%
+            pct95_lower = quantile(turnover, probs = 0.025),
             pct95_upper = quantile(turnover, probs = 0.975))
 
 # filter data and create df's for each contrast
@@ -282,39 +294,39 @@ Turnover_WCVI_High = Q_turnover %>% filter(contrast == "9")
 
 # select just self-transitions --> rows = c(1,8,15,22,29,36)
 # add region_OOT and comm_state
-Turnover_CCBC_None = Turnover_CCBC_None[c(1,8,15,22,29,36), 4:9]
+Turnover_CCBC_None = Turnover_CCBC_None[c(1,8,15,22,29,36), 4:11]
 Turnover_CCBC_None$region_OOT = "CCBC_None"
 Turnover_CCBC_None$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
 
-Turnover_CCBC_Low = Turnover_CCBC_Low[c(1,8,15,22,29,36), 4:9]
+Turnover_CCBC_Low = Turnover_CCBC_Low[c(1,8,15,22,29,36), 4:11]
 Turnover_CCBC_Low$region_OOT = "CCBC_Low"
 Turnover_CCBC_Low$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
 
-Turnover_CCBC_Med = Turnover_CCBC_Med[c(1,8,15,22,29,36), 4:9]
+Turnover_CCBC_Med = Turnover_CCBC_Med[c(1,8,15,22,29,36), 4:11]
 Turnover_CCBC_Med$region_OOT = "CCBC_Med"
 Turnover_CCBC_Med$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
 
-Turnover_CCBC_High = Turnover_CCBC_High[c(1,8,15,22,29,36), 4:9]
+Turnover_CCBC_High = Turnover_CCBC_High[c(1,8,15,22,29,36), 4:11]
 Turnover_CCBC_High$region_OOT = "CCBC_High"
 Turnover_CCBC_High$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
 
-Turnover_HG_None = Turnover_HG_None[c(1,8,15,22,29,36), 4:9]
+Turnover_HG_None = Turnover_HG_None[c(1,8,15,22,29,36), 4:11]
 Turnover_HG_None$region_OOT = "HG_None"
 Turnover_HG_None$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
 
-Turnover_WCVI_None = Turnover_WCVI_None[c(1,8,15,22,29,36), 4:9]
+Turnover_WCVI_None = Turnover_WCVI_None[c(1,8,15,22,29,36), 4:11]
 Turnover_WCVI_None$region_OOT = "WCVI_None"
 Turnover_WCVI_None$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
 
-Turnover_WCVI_Low = Turnover_WCVI_Low[c(1,8,15,22,29,36), 4:9]
+Turnover_WCVI_Low = Turnover_WCVI_Low[c(1,8,15,22,29,36), 4:11]
 Turnover_WCVI_Low$region_OOT = "WCVI_Low"
 Turnover_WCVI_Low$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
 
-Turnover_WCVI_Med = Turnover_WCVI_Med[c(1,8,15,22,29,36), 4:9]
+Turnover_WCVI_Med = Turnover_WCVI_Med[c(1,8,15,22,29,36), 4:11]
 Turnover_WCVI_Med$region_OOT = "WCVI_Med"
 Turnover_WCVI_Med$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
 
-Turnover_WCVI_High = Turnover_WCVI_High[c(1,8,15,22,29,36), 4:9]
+Turnover_WCVI_High = Turnover_WCVI_High[c(1,8,15,22,29,36), 4:11]
 Turnover_WCVI_High$region_OOT = "WCVI_High"
 Turnover_WCVI_High$comm_state = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")
 
@@ -339,14 +351,15 @@ gg_options <- function() theme_bw()+theme(
   legend.box.background=element_blank(), # removes legend box background
   legend.key= element_blank()) #
 # Plot
-# re-order comm_state for x-axis and region_OOT for legend
+# re-order comm_state for x-axis and region_OOT for legend [***run plot before this to see if this is necessary]
 Turnover_all$comm_state = factor(Turnover_all$comm_state, levels = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence"))
 Turnover_all$region_OOT = factor(Turnover_all$region_OOT, levels = c("CCBC_None", "CCBC_Low", "CCBC_Med", 
                                                                    "CCBC_High", "HG_None", "WCVI_None", 
                                                                    "WCVI_Low", "WCVI_Med", "WCVI_High"))
+# plot with +/- 1 standard error bars (uncertainty around the mean)
 ggplot(Turnover_all, aes(comm_state, mean_turnover, fill = region_OOT)) + 
   geom_col(position = "dodge") + 
-  #geom_errorbar(aes(ymin = pct95_lower, ymax = pct95_upper), width = 0.2, position = position_dodge(0.9)) + 
+  geom_errorbar(aes(ymin = mean_turnover-stderror, ymax = mean_turnover+stderror), width = 0.2, position = position_dodge(0.9)) + 
   xlab("Community State")+ 
   ylab("Turnover Time") + 
   gg_options()
@@ -364,14 +377,16 @@ dim(pmats)
 pmat_df <- melt(pmats)
 names(pmat_df) <- c("iter","contrast","from","to","Prob")
 
-# First, get mean, median, and upper & lower 90% and 95% intervals
+# First, get mean, median, sd, stderror, and upper & lower 90% and 95% quantiles
 Pmat = pmat_df %>%
   group_by(from, to, contrast) %>%
   summarise(mean = mean(Prob),
             median = median(Prob),
+            sd = sd(Prob),
+            stderror = stderror(Prob),
             pct90_lower = quantile(Prob, probs = 0.05),
             pct90_upper = quantile(Prob, probs = 0.95),
-            pct95_lower = quantile(Prob, probs = 0.025), # maybe show 2 error bars: 90% and 95%
+            pct95_lower = quantile(Prob, probs = 0.025),
             pct95_upper = quantile(Prob, probs = 0.975))
 
 # filter data and create df's for each contrast
@@ -484,6 +499,7 @@ eigen_means = eigen_means %>% relocate(Region_OOT, .before = Urchins)
 eigen_means = eigen_means %>% pivot_longer(names_to = "State", values_to = "Steady", Urchins:Coexistence)
 eigen_means
 # Modify Region_OOTCat factor levels to get the order we want (not alphabetical order)
+# [***run plot before this to see if this is necessary]
 eigen_means$Region_OOT = factor(eigen_means$Region_OOT, 
                           levels = c("CCBC_None", "CCBC_Low", "CCBC_Med", "CCBC_High", 
                                      "HG_None", 
@@ -500,6 +516,149 @@ ggplot(eigen_means, aes(State, Steady, fill = Region_OOT)) +
 
 ### Pmat Plotting ###
 
+# *** Plot of just self-transitions (4 panel plot, 1 for each OOTCat, lines denote regions)
+# Make 4 figures, use ggarrange to make 4 panel plot
+# Panel 1 (no otters) = contrasts 1, 5, 6
+# Panel 2 (low otters) = contrasts 2, 7
+# Panel 3 (med otters) = contrasts 3, 8
+# Panel 4 (high otters) = contrasts 4, 9
+
+# filter for just self transitions
+Pmat_selfs = Pmat # copy Pmat df
+Pmat_selfs = Pmat_selfs %>% 
+  filter(from == "1" & to == "1" | from == "2" & to == "2" | 
+           from == "3" & to == "3" | from == "4" & to == "4" | 
+           from == "5" & to == "5" | from == "6" & to == "6")
+
+# add region
+Pmat_selfs = Pmat_selfs %>% 
+  mutate(region = ifelse(contrast == 1 | contrast == 2 | contrast == 3 | contrast == 4, "CCBC", 
+                                 ifelse(contrast == 5, "HG", 
+                                        ifelse(contrast == 6 | contrast == 7 | contrast == 8 | contrast == 9, "WCVI", ""))))
+
+# add comm_state
+Pmat_selfs = Pmat_selfs %>% 
+  mutate(comm_state = ifelse(from == 1, "Urchins", 
+                         ifelse(from == 2, "Understory",
+                                ifelse(from == 3, "Epibenthic",
+                                       ifelse(from == 4, "Macro",
+                                              ifelse(from == 5, "Mixed",
+                                                     ifelse(from == 6, "Coexistence", "")))))))
+
+# re-order comm_state for x-axis and region_OOT for legend [***run plot before this to see if this is necessary]
+Pmat_selfs$comm_state = factor(Pmat_selfs$comm_state, levels = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence"))
+Pmat_selfs$region = factor(Pmat_selfs$region, levels = c("CCBC", "HG", "WCVI"))
+
+# Panel 1: filter Pmat_selfs df for contrasts with no otters (contrasts 1, 5, 6)
+Pmat_OOT_None = Pmat_selfs %>% filter(contrast == "1" | contrast == "5" | contrast == "6")
+Panel1 = ggplot(Pmat_OOT_None, aes(comm_state, mean, color = region)) + 
+  geom_point(position = position_dodge(0.9)) + 
+  scale_color_manual("Region", values = c("CCBC" = "cyan", "HG" = "purple", "WCVI" = "orange")) +
+  #geom_errorbar(aes(ymin = mean-sd, ymax = mean+sd), size = 1, width = 0, position = position_dodge(0.9)) +
+  geom_errorbar(aes(ymin = pct90_lower, ymax = pct90_upper), size = 1, width = 0, position = position_dodge(0.9)) +
+  geom_errorbar(aes(ymin = pct95_lower, ymax = pct95_upper), size = 0.5, width = 0, position = position_dodge(0.9)) +
+  xlab("Community State")+ 
+  ylab("Predicted Self-Transition Probability") + 
+  ggtitle("No Otters") +
+  gg_options()
+
+# Panel 2: filter Pmat_selfs df for contrasts with low otters (contrasts 2, 7)
+Pmat_OOT_Low = Pmat_selfs %>% filter(contrast == "2" | contrast == "7")
+Panel2 = ggplot(Pmat_OOT_Low, aes(comm_state, mean, color = region)) + 
+  geom_point(position = position_dodge(0.5)) + 
+  scale_color_manual("Region", values = c("CCBC" = "cyan", "WCVI" = "orange")) +
+  #geom_errorbar(aes(ymin = mean-sd, ymax = mean+sd), size = 1, width = 0, position = position_dodge(0.5)) +
+  geom_errorbar(aes(ymin = pct90_lower, ymax = pct90_upper), size = 1, width = 0, position = position_dodge(0.5)) +
+  geom_errorbar(aes(ymin = pct95_lower, ymax = pct95_upper), size = 0.5, width = 0, position = position_dodge(0.5)) +
+  xlab("Community State")+ 
+  ylab("Predicted Self-Transition Probability") + 
+  ggtitle("Low Otters") +
+  gg_options()
+
+# Panel 3: filter Pmat_selfs df for contrasts with med otters (contrasts 3, 8)
+Pmat_OOT_Med = Pmat_selfs %>% filter(contrast == "3" | contrast == "8")
+Panel3 = ggplot(Pmat_OOT_Med, aes(comm_state, mean, color = region)) + 
+  geom_point(position = position_dodge(0.5)) + 
+  scale_color_manual("Region", values = c("CCBC" = "cyan", "WCVI" = "orange")) +
+  #geom_errorbar(aes(ymin = mean-sd, ymax = mean+sd), size = 1, width = 0, position = position_dodge(0.9)) +
+  geom_errorbar(aes(ymin = pct90_lower, ymax = pct90_upper), size = 1, width = 0, position = position_dodge(0.5)) +
+  geom_errorbar(aes(ymin = pct95_lower, ymax = pct95_upper), size = 0.5, width = 0, position = position_dodge(0.5)) +
+  xlab("Community State")+ 
+  ylab("Predicted Self-Transition Probability") + 
+  ggtitle("Med Otters") +
+  gg_options()
+
+# Panel 4: filter Pmat_selfs df for contrasts with high otters (contrasts 4, 9)
+Pmat_OOT_High = Pmat_selfs %>% filter(contrast == "4" | contrast == "9")
+Panel4 = ggplot(Pmat_OOT_High, aes(comm_state, mean, color = region)) + 
+  geom_point(position = position_dodge(0.5)) + 
+  scale_color_manual("Region", values = c("CCBC" = "cyan", "WCVI" = "orange")) +
+  #geom_errorbar(aes(ymin = mean-sd, ymax = mean+sd), size = 1, width = 0, position = position_dodge(0.5)) +
+  geom_errorbar(aes(ymin = pct90_lower, ymax = pct90_upper), size = 1, width = 0, position = position_dodge(0.5)) +
+  geom_errorbar(aes(ymin = pct95_lower, ymax = pct95_upper), size = 0.5, width = 0, position = position_dodge(0.5)) +
+  xlab("Community State")+ 
+  ylab("Predicted Self-Transition Probability") + 
+  ggtitle("High Otters") +
+  gg_options()
+
+library("ggpubr")
+self_transitions = ggarrange(Panel1, Panel2, Panel3, Panel4,
+                               ncol = 2, nrow = 2)
+self_transitions
+# save as PDF
+#ggsave(".pdf", self_transitions, width=11, height=8.5)
+
+# Just No and High Otters predicted self-transitions
+self_transitions2 = ggarrange(Panel1, Panel4,
+                             ncol = 1, nrow = 2)
+self_transitions2
+# save as PDF
+#ggsave(".pdf", self_transitions2, width=11, height=8.5)
+
+# *** Plot of state transitions (6 panels, just none and high OOT categories)
+# add region to Pmat df
+Pmat = Pmat %>% 
+  mutate(region = ifelse(contrast == 1 | contrast == 2 | contrast == 3 | contrast == 4, "CCBC", 
+                         ifelse(contrast == 5, "HG", 
+                                ifelse(contrast == 6 | contrast == 7 | contrast == 8 | contrast == 9, "WCVI", ""))))
+
+# filter for just No Otters contrasts (contrasts 1, 5, 6)
+Pmat_None = Pmat %>% filter(contrast == "1" | contrast == "5" | contrast == "6")
+StateTransitions_NoOtters = ggplot(aes(y = mean, x = factor(to), color = factor(region)), data = Pmat_None)+
+  geom_point(position = position_dodge(0.9)) + 
+  scale_color_manual(name = "Region", values = c("CCBC" = "cyan", "HG" = "purple", "WCVI" = "orange")) +
+  geom_errorbar(aes(ymin = pct90_lower, ymax = pct90_upper), size = 1, width = 0, position = position_dodge(0.9)) +
+  geom_errorbar(aes(ymin = pct95_lower, ymax = pct95_upper), size = 0.5, width = 0, position = position_dodge(0.9)) +
+  facet_wrap(~from)+ # *** [ facet_wrap doesn't allow label re-naming??? ] ***
+  scale_x_discrete(labels = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")) +
+  xlab("Transition To This State")+
+  ylab("Predicted Transition Probability") + 
+  ggtitle("No Otters") +
+  gg_options()
+StateTransitions_NoOtters
+# save as PDF
+#ggsave("State Transitions_No Otters.pdf", StateTransitions_NoOtters, width=11, height=8.5)
+
+# filter for just High Otters contrasts (contrasts 4, 9)
+Pmat_High = Pmat %>% filter(contrast == "4" | contrast == "9")
+StateTransitions_HighOtters = ggplot(aes(y = mean, x = factor(to), color = factor(region)), data = Pmat_High)+
+  geom_point(position = position_dodge(0.5)) + 
+  scale_color_manual(name = "Region", values = c("CCBC" = "cyan", "WCVI" = "orange")) +
+  geom_errorbar(aes(ymin = pct90_lower, ymax = pct90_upper), size = 1, width = 0, position = position_dodge(0.5)) +
+  geom_errorbar(aes(ymin = pct95_lower, ymax = pct95_upper), size = 0.5, width = 0, position = position_dodge(0.5)) +
+  facet_wrap(~from)+ # *** [ facet_wrap doesn't allow label re-naming??? ] ***
+  scale_x_discrete(labels = c("Urchins","Understory","Epibenthic","Macro","Mixed","Coexistence")) +
+  xlab("Transition To This State")+
+  ylab("Predicted Transition Probability") + 
+  ggtitle("High Otters") +
+  gg_options()
+StateTransitions_HighOtters
+# save as PDF
+#ggsave("State Transitions_High Otters.pdf", StateTransitions_HighOtters, width=11, height=8.5)
+
+
+########### Old plot code ###########
+
 ## Plot Pmat by OOT_Cat (HG_None, WCVI_None, CCBC_None)
 # filter Pmat df for OOT_Cat contrasts: OOTCat = "None"
 Pmat_OOT_None = pmat_df %>% filter(contrast == "1" | contrast == "5" | contrast == "6")
@@ -508,7 +667,7 @@ ggplot(aes(y = Prob, x = factor(to), color = factor(contrast)), data = Pmat_OOT_
   geom_pointrange(
     stat = "summary",
     fun = mean, position = position_dodge(width = 0.5)
-  )+
+  ) + 
   geom_linerange(
     stat = "summary",
     fun.min = function(z) {quantile(z,0.025)},
